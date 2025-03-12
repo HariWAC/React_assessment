@@ -1,0 +1,550 @@
+import React, { useState,useEffect } from "react";
+import useSWR from "swr";
+import {
+  Container,
+  Row,
+  Col,
+  Card,
+  Spinner,
+  Alert,
+  Pagination,
+  Form,
+  DropdownButton,
+  Dropdown,
+  Badge,
+  Button,
+} from "react-bootstrap";
+import { useSearchParams } from "react-router-dom";
+import ReactSlider from "react-slider";
+
+// Language configurations array
+const languageConfigs = [
+  {
+    label: "English",
+    indexName: "qa-en",
+    clientId: "7645129791",
+    secretKey: "Qfj1UUkFItWfVFwWpJ65g0VfhjdVGN",
+  },
+  {
+    label: "Arabic",
+    indexName: "qa-ar",
+    clientId: "5807942863",
+    secretKey: "Llz5MR37gZ4gJULMwf762w1lQ13Iro",
+  },
+];
+
+// CustomSlider component (unchanged)
+const CustomSlider = ({ min, max, value, onChange, minDistance }) => {
+  return (
+    <ReactSlider
+      min={min}
+      max={max}
+      value={value}
+      onChange={onChange}
+      pearling
+      minDistance={minDistance}
+      renderTrack={(props, state) => {
+        const { key, ...restProps } = props;
+        return (
+          <div
+            key={`track-${state.index}`}
+            {...restProps}
+            style={{
+              ...restProps.style,
+              height: "8px",
+              background: state.index === 1 ? "#007bff" : "#ddd",
+              borderRadius: "4px",
+            }}
+          />
+        );
+      }}
+      renderThumb={(props, state) => {
+        const { key, ...restProps } = props;
+        return (
+          <div
+            key={`thumb-${state.index}`}
+            {...restProps}
+            style={{
+              ...restProps.style,
+              height: "20px",
+              width: "20px",
+              backgroundColor: "#007bff",
+              borderRadius: "50%",
+              cursor: "grab",
+              top: "-6px",
+            }}
+          />
+        );
+      }}
+    />
+  );
+};
+
+// Fetcher function (updated to use language config from search params)
+const fetcher = async ([url, query, page, filters, sortOption, lang]) => {
+  try {
+    let sort_by = "1"; // Default to relevance
+    if (sortOption === "price-high-to-low") sort_by = "2";
+    else if (sortOption === "price-low-to-high") sort_by = "3";
+
+    const languageConfig = languageConfigs.find((config) => config.label === lang) || languageConfigs[0];
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Client-id": languageConfig.clientId,
+        "Secret-key": languageConfig.secretKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        index: languageConfig.indexName,
+        search: query,
+        size: 50,
+        sort_by: sort_by,
+        page: page,
+        page_size: 28,
+        filter: {
+          category: filters.categories.length > 0 ? filters.categories : undefined,
+          price: filters.priceRange,
+          brand: filters.brands.length > 0 ? filters.brands : undefined,
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.message || "Failed to fetch data");
+    }
+
+    return response.json();
+  } catch (error) {
+    console.error("Fetch error:", error);
+    throw error;
+  }
+};
+
+// Main SearchPage component
+const SearchPage = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const query = searchParams.get("q") || "";
+  const lang = searchParams.get("lang") || "English"; // Default to English if not in URL
+
+  // Derive state from URL search params
+  const page = parseInt(searchParams.get("page")) || 1;
+  const brands = searchParams.get("brands")?.split(",") || [];
+  const categories = searchParams.get("categories")?.split(",") || [];
+  const sortOption = searchParams.get("sort") || "relevance";
+
+  // Local state for price range and user interaction tracking
+  const [priceRange, setPriceRange] = useState(null);
+  const [priceAdjustedByUser, setPriceAdjustedByUser] = useState(false);
+  const priceMinUrl = parseInt(searchParams.get("priceMin"));
+  const priceMaxUrl = parseInt(searchParams.get("priceMax"));
+
+  const filters = {
+    brands,
+    categories,
+    priceRange: priceRange || [0, 0],
+  };
+
+  const { data, error, isLoading } = useSWR(
+    query
+      ? [
+          "https://uat.search-assist.webc.in/api/search",
+          query,
+          page,
+          filters,
+          sortOption,
+          lang,
+        ]
+      : null,
+    fetcher,
+    { revalidateOnFocus: false }
+  );
+
+  const getSortDisplayName = (option) => {
+    switch (option) {
+      case "relevance": return "Relevance";
+      case "price-high-to-low": return "Price: High to Low";
+      case "price-low-to-high": return "Price: Low to High";
+      default: return "Relevance";
+    }
+  };
+
+  const items = data?.items || [];
+  const totalPages = Math.ceil((data?.total || 0) / 28);
+
+  const filterList = data?.filter_list || [];
+  const priceFilter = filterList.find((f) => f.label === "Price")?.options || {
+    min_price: 0,
+    max_price: 10000,
+  };
+  const brandFilter = filterList.find((f) => f.label === "Brand")?.options || [];
+  const categoryFilter = filterList.find((f) => f.label === "Category")?.options || [];
+
+  const minPrice = priceFilter.min_price;
+  const maxPrice = priceFilter.max_price;
+  const availableBrands = brandFilter.map((option) => option.name);
+  const availableCategories = categoryFilter.map((option) => option.name);
+
+  // Set initial price range from API only once, unless URL has values
+  useEffect(() => {
+    if (data && priceRange === null) {
+      if (priceMinUrl && priceMaxUrl) {
+        setPriceRange([priceMinUrl, priceMaxUrl]);
+        setPriceAdjustedByUser(true);
+      } else {
+        setPriceRange([minPrice, maxPrice]);
+      }
+    }
+  }, [data, minPrice, maxPrice, priceMinUrl, priceMaxUrl, priceRange]);
+
+  // Handle language change
+  const handleLanguageChange = (languageLabel) => {
+    const newParams = new URLSearchParams(searchParams);
+    newParams.set("lang", languageLabel);
+    newParams.set("page", "1"); // Reset to page 1 on language change
+    setSearchParams(newParams, { replace: true });
+  };
+
+  // Handle pagination
+  const handlePageChange = (newPage) => {
+    if (newPage >= 1 && newPage <= totalPages) {
+      const newParams = new URLSearchParams(searchParams);
+      newParams.set("page", newPage.toString());
+      setSearchParams(newParams, { replace: true });
+    }
+  };
+
+  const handleFilterChange = (type, value) => {
+    const newParams = new URLSearchParams(searchParams);
+
+    if (type === "brands" || type === "categories") {
+      const currentValues = type === "brands" ? brands : categories;
+      const updatedValues = currentValues.includes(value)
+        ? currentValues.filter((item) => item !== value)
+        : [...currentValues, value];
+      if (updatedValues.length > 0) {
+        newParams.set(type, updatedValues.join(","));
+      } else {
+        newParams.delete(type);
+      }
+    } else if (type === "priceRange") {
+      setPriceRange(value);
+      setPriceAdjustedByUser(true);
+      newParams.set("priceMin", value[0].toString());
+      newParams.set("priceMax", value[1].toString());
+    } else if (type === "sort") {
+      if (value === "relevance") {
+        newParams.delete("sort");
+      } else {
+        newParams.set("sort", value);
+      }
+    }
+
+    newParams.set("page", "1");
+    setSearchParams(newParams, { replace: true });
+  };
+
+  // Clear all filters
+  const clearAllFilters = () => {
+    const newParams = new URLSearchParams();
+    newParams.set("q", query);
+    newParams.set("page", "1");
+    newParams.set("lang", lang); // Preserve language from search params
+    if (sortOption !== "relevance") {
+      newParams.set("sort", sortOption);
+    }
+    if (priceAdjustedByUser && priceRange) {
+      newParams.set("priceMin", priceRange[0].toString());
+      newParams.set("priceMax", priceRange[1].toString());
+    }
+    setSearchParams(newParams, { replace: true });
+  };
+
+  // Clear specific filter
+  const clearFilter = (type, value = null) => {
+    const newParams = new URLSearchParams(searchParams);
+
+    if (type === "brand") {
+      const updatedBrands = brands.filter((brand) => brand !== value);
+      if (updatedBrands.length > 0) {
+        newParams.set("brands", updatedBrands.join(","));
+      } else {
+        newParams.delete("brands");
+      }
+    } else if (type === "category") {
+      const updatedCategories = categories.filter((category) => category !== value);
+      if (updatedCategories.length > 0) {
+        newParams.set("categories", updatedCategories.join(","));
+      } else {
+        newParams.delete("categories");
+      }
+    } else if (type === "sort") {
+      newParams.delete("sort");
+    }
+
+    newParams.set("page", "1");
+    setSearchParams(newParams, { replace: true });
+  };
+
+  // Handle sort selection
+  const handleSortChange = (eventKey) => {
+    handleFilterChange("sort", eventKey);
+  };
+
+  // Get total active filters count (excluding price)
+  const getActiveFiltersCount = () => {
+    let count = 0;
+    if (brands.length > 0) count += brands.length;
+    if (categories.length > 0) count += categories.length;
+    if (sortOption !== "relevance") count += 1;
+    return count;
+  };
+
+  return (
+    <Container className="mt-4">
+      <Row>
+        {/* Left Side - Filters */}
+        <Col md={3}>
+          <Card className="mb-4">
+            <Card.Header className="d-flex justify-content-between align-items-center">
+              <h5 className="mb-0">Filters</h5>
+              {getActiveFiltersCount() > 0 && (
+                <Button
+                  variant="outline-primary"
+                  size="sm"
+                  onClick={clearAllFilters}
+                >
+                  Clear All
+                </Button>
+              )}
+            </Card.Header>
+            <Card.Body>
+              {/* Language Dropdown */}
+              <div className="mb-3">
+                <h6>Language</h6>
+                <DropdownButton
+                  title={lang}
+                  onSelect={handleLanguageChange}
+                  className="mb-2"
+                  size="sm"
+                >
+                  {languageConfigs.map((config) => (
+                    <Dropdown.Item key={config.label} eventKey={config.label}>
+                      {config.label}
+                    </Dropdown.Item>
+                  ))}
+                </DropdownButton>
+              </div>
+
+              {/* Sort Filter */}
+              <div className="mb-3">
+                <h6>Sort by:</h6>
+                <DropdownButton
+                  title={getSortDisplayName(sortOption)}
+                  onSelect={handleSortChange}
+                  className="mb-2"
+                  size="sm"
+                >
+                  <Dropdown.Item eventKey="relevance">Relevance</Dropdown.Item>
+                  <Dropdown.Item eventKey="price-high-to-low">
+                    Price: High to Low
+                  </Dropdown.Item>
+                  <Dropdown.Item eventKey="price-low-to-high">
+                    Price: Low to High
+                  </Dropdown.Item>
+                </DropdownButton>
+              </div>
+
+              {/* Brand Filter */}
+              {availableBrands.length > 0 && (
+                <div className="mb-3">
+                  <h6>Brand</h6>
+                  <Form>
+                    {availableBrands.map((brand) => (
+                      <Form.Check
+                        key={brand}
+                        type="checkbox"
+                        label={brand}
+                        checked={filters.brands.includes(brand)}
+                        onChange={() => handleFilterChange("brands", brand)}
+                      />
+                    ))}
+                  </Form>
+                </div>
+              )}
+
+              {/* Category Filter */}
+              {availableCategories.length > 0 && (
+                <div className="mb-3">
+                  <h6>Category</h6>
+                  <Form>
+                    {availableCategories.map((category) => (
+                      <Form.Check
+                        key={category}
+                        type="checkbox"
+                        label={category}
+                        checked={filters.categories.includes(category)}
+                        onChange={() => handleFilterChange("categories", category)}
+                      />
+                    ))}
+                  </Form>
+                </div>
+              )}
+
+              {/* Price Range Filter */}
+              {priceRange && minPrice !== undefined && maxPrice !== undefined && (
+                <div className="mb-3">
+                  <h6>Price Range</h6>
+                  <div style={{ marginBottom: "10px" }}>
+                    {priceRange[0]} - {priceRange[1]}
+                  </div>
+                  <CustomSlider
+                    min={minPrice}
+                    max={maxPrice}
+                    value={priceRange}
+                    onChange={(value) => handleFilterChange("priceRange", value)}
+                    minDistance={10}
+                  />
+                </div>
+              )}
+            </Card.Body>
+          </Card>
+        </Col>
+
+        {/* Right Side - Search Results */}
+        <Col md={9}>
+          <h1 className="text-center mb-3">Search Results for: {query}</h1>
+
+          {getActiveFiltersCount() > 0 && (
+            <div className="mb-3">
+              <div className="d-flex flex-wrap gap-2 align-items-center">
+                <span>Active Filters:</span>
+
+                {sortOption !== "relevance" && (
+                  <Badge bg="primary" className="d-flex align-items-center p-2">
+                    Sort: {getSortDisplayName(sortOption)}
+                    <Button
+                      variant="link"
+                      className="p-0 ms-2 text-white"
+                      onClick={() => clearFilter("sort")}
+                    >
+                      ✕
+                    </Button>
+                  </Badge>
+                )}
+
+                {brands.map((brand) => (
+                  <Badge key={brand} bg="primary" className="d-flex align-items-center p-2">
+                    {brand}
+                    <Button
+                      variant="link"
+                      className="p-0 ms-2 text-white"
+                      onClick={() => clearFilter("brand", brand)}
+                    >
+                      ✕
+                    </Button>
+                  </Badge>
+                ))}
+
+                {categories.map((category) => (
+                  <Badge key={category} bg="primary" className="d-flex align-items-center p-2">
+                    {category}
+                    <Button
+                      variant="link"
+                      className="p-0 ms-2 text-white"
+                      onClick={() => clearFilter("category", category)}
+                    >
+                      ✕
+                    </Button>
+                  </Badge>
+                ))}
+
+                {getActiveFiltersCount() > 1 && (
+                  <Button
+                    variant="outline-primary"
+                    size="sm"
+                    onClick={clearAllFilters}
+                  >
+                    Clear All
+                  </Button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {isLoading && (
+            <div className="text-center">
+              <Spinner animation="border" variant="primary" />
+            </div>
+          )}
+
+          {error && (
+            <Alert variant="danger">
+              <Alert.Heading>Oops!</Alert.Heading>
+              <p>{error.message}</p>
+            </Alert>
+          )}
+
+          {!isLoading && !error && (
+            <>
+              <Row xs={1} md={3} className="g-4 mb-4">
+                {items.length > 0 ? (
+                  items.map((item) => (
+                    <Col key={item.id}>
+                      <Card className="h-100">
+                        <Card.Img
+                          variant="top"
+                          src={item.image_link}
+                          alt={item.title}
+                          className="img-fluid rounded"
+                        />
+                        <Card.Body>
+                          <Card.Title>{item.title}</Card.Title>
+                          <Card.Text className="fw-bold">
+                            Price: {item.sale_price}
+                          </Card.Text>
+                        </Card.Body>
+                      </Card>
+                    </Col>
+                  ))
+                ) : (
+                  <Col className="text-center">
+                    <p className="lead">Results not found</p>
+                  </Col>
+                )}
+              </Row>
+
+              {totalPages > 1 && (
+                <div className="d-flex justify-content-center">
+                  <Pagination>
+                    <Pagination.Prev
+                      onClick={() => handlePageChange(page - 1)}
+                      disabled={page === 1}
+                    />
+                    {Array.from({ length: totalPages }, (_, index) => (
+                      <Pagination.Item
+                        key={index + 1}
+                        active={index + 1 === page}
+                        onClick={() => handlePageChange(index + 1)}
+                      >
+                        {index + 1}
+                      </Pagination.Item>
+                    ))}
+                    <Pagination.Next
+                      onClick={() => handlePageChange(page + 1)}
+                      disabled={page === totalPages}
+                    />
+                  </Pagination>
+                </div>
+              )}
+            </>
+          )}
+        </Col>
+      </Row>
+    </Container>
+  );
+};
+
+export default SearchPage;
