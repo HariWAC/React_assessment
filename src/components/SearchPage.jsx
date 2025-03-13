@@ -74,10 +74,15 @@ const SearchPage = () => {
   const categories = searchParams.get("categories")?.split(",") || [];
   const sortOption = searchParams.get("sort") || "relevance";
 
-  const [priceRange, setPriceRange] = useState([0, 0]);
-  const [priceAdjustedByUser, setPriceAdjustedByUser] = useState(false);
   const priceMinUrl = parseInt(searchParams.get("priceMin"));
   const priceMaxUrl = parseInt(searchParams.get("priceMax"));
+  
+  // Initialize priceRange and priceAdjustedByUser 
+  const [priceRange, setPriceRange] = useState([
+    !isNaN(priceMinUrl) ? priceMinUrl : 0,
+    !isNaN(priceMaxUrl) ? priceMaxUrl : 0
+  ]);
+  const [priceAdjustedByUser, setPriceAdjustedByUser] = useState(!isNaN(priceMinUrl) && !isNaN(priceMaxUrl));
 
   const filters = {
     brands,
@@ -97,23 +102,6 @@ const SearchPage = () => {
     : null;
 
   const { data, error, isLoading } = useSWRImmutable(swrKey, fetcher);
-
-  useEffect(() => {
-    setSearchQuery(queryFromUrl);
-  }, [queryFromUrl]);
-
-  useEffect(() => {
-    if (data && !priceAdjustedByUser) {
-      const minPrice = priceFilter.min_price;
-      const maxPrice = priceFilter.max_price;
-      if (priceMinUrl && priceMaxUrl) {
-        setPriceRange([priceMinUrl, priceMaxUrl]);
-        setPriceAdjustedByUser(true);
-      } else {
-        setPriceRange([minPrice, maxPrice]);
-      }
-    }
-  }, [data, priceMinUrl, priceMaxUrl, priceAdjustedByUser]);
 
   const handleSearchChange = (e) => {
     const newQuery = e.target.value;
@@ -192,6 +180,16 @@ const SearchPage = () => {
     min_price: 0,
     max_price: 10000,
   };
+  
+  // The only useEffect in the component
+  useEffect(() => {
+    if (data && !priceAdjustedByUser) {
+      const minPrice = priceFilter.min_price;
+      const maxPrice = priceFilter.max_price;
+      setPriceRange([minPrice, maxPrice]);
+    }
+  }, [data, priceAdjustedByUser, priceFilter.min_price, priceFilter.max_price]);
+
   const brandFilter = filterList.find((f) => f.label === "Brand")?.options || [];
   const categoryFilter = filterList.find((f) => f.label === "Category")?.options || [];
 
