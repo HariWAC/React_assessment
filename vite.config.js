@@ -5,7 +5,7 @@ import tailwindcss from '@tailwindcss/vite'
 // https://vite.dev/config/
 export default defineConfig({
   
-  plugins: [react(),tailwindcss()],
+  plugins: [react()],
   server: {port: 5174},
   alias: {
     '@': '/src', // Ensure this points to your src directory
